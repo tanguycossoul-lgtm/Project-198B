@@ -355,7 +355,7 @@ if __name__ == "__main__":
 
     # Configuration
     data_directory = "data"
-    crop_tl = (500, 10)      # Top-left (x, y) crop coordinate
+    crop_tl = (500, 5)      # Top-left (x, y) crop coordinate
     crop_br = (1450, 1450)   # Bottom-right (x, y) crop coordinate
     frame_range = (760, 780)    # Inclusive range of frame numbers to process
     save_intermediates = True
