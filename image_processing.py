@@ -2,6 +2,7 @@ import csv
 import cv2
 import os
 import glob
+import shutil
 import numpy as np
 from scipy.optimize import curve_fit
 
@@ -130,6 +131,31 @@ def fit_laser_lines(peaks, image_height):
     return result
 
 
+def fit_laser_lines_debug(peaks, image_height, output_path="debug_inliers.csv"):
+    """
+    Run fit_laser_lines and save inlier coordinates to a CSV file for debugging.
+
+    Args:
+        peaks: List of (x, y) tuples
+        image_height: Height of the image (used to split halves)
+        output_path: Path to the debug CSV file
+
+    Returns:
+        Dictionary from fit_laser_lines (same as normal call)
+    """
+    fit_result = fit_laser_lines(peaks, image_height)
+
+    with open(output_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['label', 'x', 'y'])
+        for label in ['top', 'bottom']:
+            for (x, y) in fit_result[label]['inliers']:
+                writer.writerow([label, x, y])
+
+    print(f"Debug inliers saved to: {output_path}")
+    return fit_result
+
+
 def calculate_fit_angle(fit_result):
     """
     Calculate the angle between the top and bottom linear fit segments.
@@ -152,8 +178,10 @@ def calculate_fit_angle(fit_result):
     slope_top = top_params[0]
     slope_bottom = bottom_params[0]
 
-    # Direction vectors: (slope, 1) for each line in (x, y) space
-    dot = slope_top * slope_bottom + 1
+    # Direction vectors: top points downward (slope_top, 1),
+    # bottom is reversed to point upward (-slope_bottom, -1),
+    # giving the opening angle at the reflection point.
+    dot = -slope_top * slope_bottom - 1
     mag_top = np.sqrt(slope_top**2 + 1)
     mag_bottom = np.sqrt(slope_bottom**2 + 1)
 
@@ -233,7 +261,8 @@ def visualize_fits(image, fit_result, image_height, output_path, frame_number=No
 
 
 def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 1450),
-                   vis_dir=None, intermediates_dir=None, peak_step=10):
+                   vis_dir=None, intermediates_dir=None, peak_step=10, debug=False,
+                   output_dir=None):
     """
     Process a single frame to enhance and edge-detect the laser.
 
@@ -252,7 +281,7 @@ def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 14
     image = cv2.imread(image_path)
     x1, y1 = crop_tl
     x2, y2 = crop_br
-    image = image[y1:y2, x1:x2]
+#    image = image[y1:y2, x1:x2]  #FIXME #3
 
     # Save intermediate: original loaded image
     if intermediates_dir:
@@ -274,7 +303,11 @@ def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 14
 
     # Fit linear models on top and bottom halves, rejecting outliers
     image_height = image.shape[0]
-    fit_result = fit_laser_lines(peaks, image_height)
+    if debug:
+        debug_path = f"{output_dir}/debug_inliers_{frame_number}.csv" if output_dir else "debug_inliers.csv"
+        fit_result = fit_laser_lines_debug(peaks, image_height, output_path=debug_path)
+    else:
+        fit_result = fit_laser_lines(peaks, image_height)
 
     # Save overlay: fitted lines and inlier points on original image
     if vis_dir:
@@ -297,7 +330,8 @@ def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 14
 
 
 def process_image_sequence(data_dir, output_dir, crop_tl=(500, 10), crop_br=(1450, 1450),
-                           frame_range=(1, 50), save_intermediates=False, peak_step=10):
+                           frame_range=(1, 50), save_intermediates=False, peak_step=10,
+                           debug=False):
     """
     Process all frames in sequence.
 
@@ -332,7 +366,9 @@ def process_image_sequence(data_dir, output_dir, crop_tl=(500, 10), crop_br=(145
                       crop_tl=crop_tl, crop_br=crop_br,
                       vis_dir=vis_dir if save_intermediates else None,
                       intermediates_dir=intermediates_dir if save_intermediates else None,
-                      peak_step=peak_step)
+                      peak_step=peak_step,
+                      debug=debug,
+                      output_dir=output_dir)
         all_frame_data.append(frame_data)
 
     # Export angles to CSV
@@ -349,17 +385,20 @@ def process_image_sequence(data_dir, output_dir, crop_tl=(500, 10), crop_br=(145
 
 
 if __name__ == "__main__":
-    # Create output directory
+    # Clear and recreate output directory
     output_dir = "output"
-    os.makedirs(output_dir, exist_ok=True)
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir)
 
     # Configuration
     data_directory = "data"
     crop_tl = (500, 5)      # Top-left (x, y) crop coordinate
-    crop_br = (1450, 1450)   # Bottom-right (x, y) crop coordinate
-    frame_range = (760, 780)    # Inclusive range of frame numbers to process
+    crop_br = (1450, 1450)  # Bottom-right (x, y) crop coordinate
+    frame_range = (1820, 1820)   # (760, 780)    # Inclusive range of frame numbers to process
     save_intermediates = True
-    peak_step = 10               # Vertical step between horizontal strips
+    peak_step = 10          # Vertical step between horizontal strips
+    debug = False           # Save inlier coordinates to debug_inliers.csv
 
     print("Laser Path Tracking System")
     print("=" * 50)
@@ -374,7 +413,8 @@ if __name__ == "__main__":
                            crop_tl=crop_tl, crop_br=crop_br,
                            frame_range=frame_range,
                            save_intermediates=save_intermediates,
-                           peak_step=peak_step)
+                           peak_step=peak_step,
+                           debug=debug)
 
     print("\nProcessing complete!")
     if save_intermediates:
