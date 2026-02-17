@@ -54,17 +54,14 @@ def convert_pngs_to_video(data_dir, output_path, fps=25, frame_range=(1, 50),
     for image_path, frame_num in filtered_files:
         frame = cv2.imread(image_path)
 
-        # Draw frame number on top-right corner
+        # Draw frame number on top-left corner
         if stamp_frames:
-            text = str(frame_num)
+            text = f"Frame: {frame_num}"
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 2.3
-            thickness = 4
-            (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-            margin = 10
-            x = width - text_w - margin
-            y = text_h + margin
-            cv2.putText(frame, text, (x, y), font, font_scale, (0, 0, 255), thickness, cv2.LINE_AA)
+            font_scale = 0.84
+            thickness = 2
+            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            cv2.putText(frame, text, (10, text_h + 10), font, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
 
         writer.write(frame)
         print(f"Added {image_path} (frame {frame_num})")
