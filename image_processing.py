@@ -33,6 +33,22 @@ def enhance_laser(image):
     return enhanced, intermediates
 
 
+def apply_luminosity_threshold(image, lower_threshold=100):
+    """
+    Zero out pixels below a luminosity lower threshold.
+
+    Args:
+        image: Grayscale image
+        lower_threshold: Minimum luminosity value; pixels below this are set to 0
+
+    Returns:
+        Thresholded image
+    """
+    result = image.copy()
+    result[result < lower_threshold] = 0
+    return result
+
+
 def _gaussian(x, amplitude, mu, sigma, offset):
     """Gaussian function for curve fitting."""
     return amplitude * np.exp(-(x - mu)**2 / (2 * sigma**2)) + offset
@@ -261,8 +277,8 @@ def visualize_fits(image, fit_result, image_height, output_path, frame_number=No
 
 
 def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 1450),
-                   vis_dir=None, intermediates_dir=None, peak_step=10, debug=False,
-                   output_dir=None):
+                   vis_dir=None, intermediates_dir=None, peak_step=10, strip_height=5,
+                   debug=False, output_dir=None, luminosity_threshold=100):
     """
     Process a single frame to enhance and edge-detect the laser.
 
@@ -281,7 +297,7 @@ def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 14
     image = cv2.imread(image_path)
     x1, y1 = crop_tl
     x2, y2 = crop_br
-#    image = image[y1:y2, x1:x2]  #FIXME #3
+    image = image[y1:y2, x1:x2]
 
     # Save intermediate: original loaded image
     if intermediates_dir:
@@ -298,8 +314,15 @@ def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 14
         cv2.imwrite(f"{intermediates_dir}/frame_{frame_number}_3_clahe.png",
                      stamp_frame_number(enhance_steps['clahe'].copy(), frame_number))
 
+    # Apply luminosity lower threshold
+    thresholded = apply_luminosity_threshold(enhance_steps['clahe'], luminosity_threshold)
+
+    if intermediates_dir:
+        cv2.imwrite(f"{intermediates_dir}/frame_{frame_number}_4_threshold.png",
+                     stamp_frame_number(thresholded.copy(), frame_number))
+
     # Find laser peaks via Gaussian fitting on horizontal strips
-    peaks = find_laser_peaks(enhance_steps['clahe'], step=peak_step)
+    peaks = find_laser_peaks(thresholded, strip_height=strip_height, step=peak_step)
 
     # Fit linear models on top and bottom halves, rejecting outliers
     image_height = image.shape[0]
@@ -331,7 +354,7 @@ def process_frame(image_path, frame_number, crop_tl=(500, 10), crop_br=(1450, 14
 
 def process_image_sequence(data_dir, output_dir, crop_tl=(500, 10), crop_br=(1450, 1450),
                            frame_range=(1, 50), save_intermediates=False, peak_step=10,
-                           debug=False):
+                           strip_height=5, debug=False, luminosity_threshold=100):
     """
     Process all frames in sequence.
 
@@ -367,8 +390,10 @@ def process_image_sequence(data_dir, output_dir, crop_tl=(500, 10), crop_br=(145
                       vis_dir=vis_dir if save_intermediates else None,
                       intermediates_dir=intermediates_dir if save_intermediates else None,
                       peak_step=peak_step,
+                      strip_height=strip_height,
                       debug=debug,
-                      output_dir=output_dir)
+                      output_dir=output_dir,
+                      luminosity_threshold=luminosity_threshold)
         all_frame_data.append(frame_data)
 
     # Export angles to CSV
@@ -393,12 +418,14 @@ if __name__ == "__main__":
 
     # Configuration
     data_directory = "data"
-    crop_tl = (500, 5)      # Top-left (x, y) crop coordinate
-    crop_br = (1450, 1450)  # Bottom-right (x, y) crop coordinate
-    frame_range = (1820, 1820)   # (760, 780)    # Inclusive range of frame numbers to process
+    crop_tl = (500, 5)          # Top-left (x, y) crop coordinate
+    crop_br = (1450, 1450)      # Bottom-right (x, y) crop coordinate
+    frame_range = (537, 537)    # (760, 780)    # Inclusive range of frame numbers to process
     save_intermediates = True
-    peak_step = 10          # Vertical step between horizontal strips
-    debug = False           # Save inlier coordinates to debug_inliers.csv
+    peak_step    = 10           # Vertical step between horizontal strips
+    strip_height = 10           # Height of each horizontal strip in pixels
+    debug        = True         # Save inlier coordinates to debug_inliers.csv
+    luminosity_threshold = 100  # Minimum luminosity; pixels below this are zeroed after CLAHE
 
     print("Laser Path Tracking System")
     print("=" * 50)
@@ -414,7 +441,9 @@ if __name__ == "__main__":
                            frame_range=frame_range,
                            save_intermediates=save_intermediates,
                            peak_step=peak_step,
-                           debug=debug)
+                           strip_height=strip_height,
+                           debug=debug,
+                           luminosity_threshold=luminosity_threshold)
 
     print("\nProcessing complete!")
     if save_intermediates:
