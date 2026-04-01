@@ -295,7 +295,7 @@ if __name__ == "__main__":
 
     # Configuration
     data_directory = "data"
-    frame_range = (5002, 5002)         # Inclusive range of frame numbers to process
+    frame_range = (1, 2000)         # Inclusive range of frame numbers to process
     crop_leaflet_top_tl = (1450, 380)  # Top-left (x, y) crop — top leaflet
     crop_leaflet_top_br = (1635, 660)  # Bottom-right (x, y) crop — top leaflet
     crop_leaflet_bot_tl = (1450, 660)  # Top-left (x, y) crop — bottom leaflet
