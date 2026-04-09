@@ -4,4 +4,4 @@ data/
 !output/saved/
 !output/saved/**
 nul
-output_saved/laser_video_1-2000.mp4
+output_saved/*.mp4
