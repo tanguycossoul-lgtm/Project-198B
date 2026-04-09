@@ -100,8 +100,8 @@ def convert_pngs_to_video(data_dir, output_path, fps=25, frame_range=(1, 50),
 
 if __name__ == "__main__":
     # Configuration
-    frame_range = (1137, 1147)
-    repeat_count = 10
+    frame_range = (765, 1147)
+    repeat_count = 1
     repeat_delay = 3
 
     output_path = f"output/laser_video_{frame_range[0]}-{frame_range[1]}_{repeat_count}x.mp4"
