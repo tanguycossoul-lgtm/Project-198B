@@ -46,41 +46,43 @@ def fit_circle(points):
     return cx, cy, r
 
 
-def compute_leaflet_angles(all_data, image_path_last, crop_tl, output_dir):
+def compute_leaflet_angles(all_data, img_path_last, crop_tl, dbg_dir):
     """
     Fit a circle to the leftmost-pixel trajectory, fill in the angle field
     for all leaflet frames, and return the list of (frame_number, angle, method)
     tuples for all frames.
 
     Args:
-        all_data: List of frame dicts (modified in-place)
-        image_path_last: Path to the last input image
-        crop_tl: Top-left crop coordinate
-        output_dir: Directory to save the trajectory image
+        all_data:       List of frame dicts (modified in-place)
+        img_path_last:  Path to the last input image
+        crop_tl:        Top-left crop coordinate
+        dbg_dir:        Directory to save the trajectory image
 
     Returns:
         List of (frame_number, angle, method) tuples
     """
-    cx_fit, cy_fit, _ = fit_circle_trajectory(all_data, image_path_last, crop_tl, output_dir)
+    cx_fit, cy_fit, _ = fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir)
 
     for d in all_data:
         if d['method'] == 'leaflet' and d['leftmost'] is not None and cx_fit is not None:
             lft = d['leftmost']
-            d['angle'] = np.degrees(np.arctan2(lft[1] - cy_fit, lft[0] - cx_fit)) % 360
+            dx = lft[0] - cx_fit
+            dy = lft[1] - cy_fit
+            d['angle'] = np.degrees(np.arctan2(-dx, dy)) % 360
 
     return [(d['frame_number'], d['angle'], d['method']) for d in all_data]
 
 
-def fit_circle_trajectory(all_data, image_path_last, crop_tl, output_dir):
+def fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir):
     """
     Fit a circle to the leftmost-pixel trajectory, draw it on the last input
     image alongside all centroid and leftmost points, and save the result.
 
     Args:
-        all_data: List of frame dicts (must contain 'leftmost' and 'centroid')
-        image_path_last: Path to the last input image (used as background)
-        crop_tl: Top-left crop coordinate (offset for drawing on full image)
-        output_dir: Directory to save the trajectory image
+        all_data:       List of frame dicts (must contain 'leftmost' and 'centroid')
+        img_path_last:  Path to the last input image (used as background)
+        crop_tl:        Top-left crop coordinate (offset for drawing on full image)
+        dbg_dir:        Directory to save the trajectory image
 
     Returns:
         (cx_fit, cy_fit, r_fit) or (None, None, None) if fit failed
@@ -94,7 +96,7 @@ def fit_circle_trajectory(all_data, image_path_last, crop_tl, output_dir):
 
     if cx_fit is not None:
         last_frame_num = all_data[-1]['frame_number']
-        traj = cv2.imread(image_path_last).copy()
+        traj = cv2.imread(img_path_last).copy()
         ox, oy = crop_tl
         for pt in lft_points:
             cv2.circle(traj, (int(pt[0]) + ox, int(pt[1]) + oy), 2, (0, 255, 255), -1)
@@ -103,7 +105,7 @@ def fit_circle_trajectory(all_data, image_path_last, crop_tl, output_dir):
         cv2.circle(traj, (int(cx_fit) + ox, int(cy_fit) + oy), int(r_fit), (0, 165, 255), 2)
         cv2.drawMarker(traj, (int(cx_fit) + ox, int(cy_fit) + oy), (0, 165, 255),
                        cv2.MARKER_CROSS, markerSize=16, thickness=2)
-        traj_path = f"{output_dir}/frame_{last_frame_num}_circle_fit_trajectory.png"
+        traj_path = f"{dbg_dir}/frame_{last_frame_num}_circle_fit_trajectory.png"
         cv2.imwrite(traj_path, traj)
         print(f"  Circle fit: center=({cx_fit:.1f}, {cy_fit:.1f}), r={r_fit:.1f}. Saved: {traj_path}")
     else:
@@ -112,32 +114,30 @@ def fit_circle_trajectory(all_data, image_path_last, crop_tl, output_dir):
     return cx_fit, cy_fit, r_fit
 
 
-def method2_leaflet(image_path, frame_number, crop_tl, crop_br,
-                    output_dir=None, threshold=20,
-                    dbg_overlay=True, dbg_threshold=True):
+def method2_leaflet(img_path, image, frame_num, crop_tl, crop_br, img_thresh=20,
+                    dbg_dir=None, dbg_overlay=False, dbg_threshold=False):
     """
     Process a single frame: threshold and compute centroid + leftmost white pixel.
 
     Args:
-        image_path: Path to image file
-        frame_number: Frame number
-        crop_tl: Top-left crop coordinate
-        crop_br: Bottom-right crop coordinate
-        output_dir: Directory to save overlay images
-        threshold: Binary threshold value
-        dbg_overlay: If True, save centroid overlay image
-        dbg_threshold: If True, save threshold visualization image
+        img_path:       Path to image file
+        frame_num:   Frame number
+        crop_tl:        Top-left crop coordinate
+        crop_br:        Bottom-right crop coordinate
+        img_thresh:     Binary threshold value
+        dbg_dir:        Directory to save overlay images
+        dbg_overlay:    If True, save centroid overlay image
+        dbg_threshold:  If True, save threshold visualization image
 
     Returns:
         Dict with frame_number, filename, centroid, leftmost,
         angle=None, method='leaflet'
     """
-    image = cv2.imread(image_path)
     x1, y1 = crop_tl
     x2, y2 = crop_br
     image = image[y1:y2, x1:x2]
 
-    binary_vis = preprocess_image(image, threshold)
+    binary_vis = preprocess_image(image, img_thresh)
     # Compute white-pixel centroid from thresholded image
     M = cv2.moments(binary_vis)
     if M['m00'] > 0:
@@ -155,11 +155,11 @@ def method2_leaflet(image_path, frame_number, crop_tl, crop_br,
         leftmost = None
 
     # Save threshold visualization
-    if output_dir and dbg_threshold:
-        cv2.imwrite(f"{output_dir}/frame_{frame_number}_threshold.png", binary_vis)
+    if dbg_dir and dbg_threshold:
+        cv2.imwrite(f"{dbg_dir}/dbg_frame_{frame_num}_leaflet_threshold.png", binary_vis)
 
     # Save overlay with centroid and leftmost markers
-    if output_dir and dbg_overlay:
+    if dbg_dir and dbg_overlay:
         overlay = image.copy()
         if centroid:
             cv2.drawMarker(overlay, centroid, (0, 255, 0),
@@ -167,16 +167,19 @@ def method2_leaflet(image_path, frame_number, crop_tl, crop_br,
         if leftmost:
             cv2.drawMarker(overlay, leftmost, (0, 255, 255),
                            cv2.MARKER_CROSS, markerSize=20, thickness=2)
-        text = f"Frame: {frame_number}"
         font = cv2.FONT_HERSHEY_SIMPLEX
-        (_, text_h), _ = cv2.getTextSize(text, font, 0.84, 2)
-        cv2.putText(overlay, text, (10, text_h + 10), font, 0.84,
-                    (0, 255, 0), 2, cv2.LINE_AA)
-        cv2.imwrite(f"{output_dir}/frame_{frame_number}_overlay.png", overlay)
+        (_, text_h), _ = cv2.getTextSize("X", font, 0.3, 2)
+        for i, text in enumerate([
+            f"Frame: {frame_num}",
+            "Leaflet angle: ",
+        ]):
+            cv2.putText(overlay, text, (10, text_h + 10 + i * (text_h + 6)),
+                        font, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.imwrite(f"{dbg_dir}/dbg_frame_{frame_num}_leaflet_overlay.png", overlay)
 
     return {
-        'frame_number': frame_number,
-        'filename': os.path.basename(image_path),
+        'frame_number': frame_num,
+        'filename': os.path.basename(img_path),
         'centroid': centroid,
         'leftmost': leftmost,
         'angle': None,

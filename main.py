@@ -3,31 +3,62 @@ import cv2
 import os
 import glob
 import shutil
+from smooth_results import smooth_results
 
-from laser_detection import method1_laser
+from laser_detection import detect_primary_laser_angle, method1_laser
 from leaflet_detection import preprocess_image, count_white_pixels, method2_leaflet, compute_leaflet_angles
 
 
-def process_sequence(data_dir, output_dir, tl, br,
-                     frame_range, luminosity_threshold=20, leaflet_sel="top",
-                     dbg_overlay=True, dbg_threshold=True,
-                     method_selection_threshold=400):
+def reset_dirs(*dirs):
+    for d in dirs:
+        if os.path.exists(d):
+            shutil.rmtree(d)
+        os.makedirs(d)
+
+
+
+def write_results_csv(results, results_smooth, smooth_cutoff, csv_path):
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Frame', 'Angle', f'Angle ({smooth_cutoff})', 'Method', 'Angle (laser)', 'Angle (leaflet)'])
+        for (frame_number, angle, method), (_, angle_smooth, _) in zip(results, results_smooth):
+            angle_s        = f"{angle:.2f}"        if angle        is not None else 'N/A'
+            angle_smooth_s = f"{angle_smooth:.2f}" if angle_smooth is not None else 'N/A'
+            laser_angle    = angle_s if method == 'laser'   else ''
+            leaflet_angle  = angle_s if method == 'leaflet' else ''
+            writer.writerow([frame_number, angle_s, angle_smooth_s, method, laser_angle, leaflet_angle])
+
+
+def process_sequence(data_dir, dbg_dir,
+                     frame_range,
+                     method_select_thresh,
+                     img_laser_tl, img_laser_br,
+                     img_laser_thresh, laser_strip_width, laser_peak_step, laser_min_peak,
+                     primary_laser_angle,
+                     img_leafl_tl, img_leafl_br,
+                     img_leafl_thresh,
+                     dbg_overlay=True, dbg_threshold=True):
     """
     Process a sequence of frames, dispatching to method1_laser or method2_leaflet
     based on the white pixel count threshold.
 
     Args:
         data_dir: Input directory with Set_01_*.png files
-        output_dir: Root output directory
-        tl: Top-left crop coordinate
-        br: Bottom-right crop coordinate
+        dbg_dir: Directory to save debug images
         frame_range: (start, end) inclusive
-        luminosity_threshold: Binary threshold value for leaflet detection
-        leaflet_sel: "top" or "bot" leaflet selection
+        method_select_thresh: Min white pixel count to use method2_leaflet;
+                              frames below this use method1_laser
+        img_laser_tl: Top-left crop coordinate for method1_laser
+        img_laser_br: Bottom-right crop coordinate for method1_laser
+        img_laser_thresh: Intensity threshold for method1_laser
+        laser_strip_width: Width of each vertical strip for centroid detection
+        laser_peak_step: Vertical step between strips
+        laser_min_peak: Min strip peak intensity to consider a peak valid
+        img_leafl_tl: Top-left crop coordinate for method2_leaflet
+        img_leafl_br: Bottom-right crop coordinate for method2_leaflet
+        img_leafl_thresh: Binary threshold value for leaflet detection
         dbg_overlay: If True, save overlay images
         dbg_threshold: If True, save threshold visualization images
-        method_selection_threshold: Min white pixel count to use method2_leaflet;
-                                    frames below this use method1_laser
     """
     image_files = sorted(glob.glob(f"{data_dir}/Set_01_*.png"))
     start, end = frame_range
@@ -35,77 +66,89 @@ def process_sequence(data_dir, output_dir, tl, br,
                    if start <= int(f.split('_')[-1].split('.')[0]) <= end]
 
     all_data = []
-    for image_path in image_files:
-        frame_num = int(image_path.split('_')[-1].split('.')[0])
+    for img_path in image_files:
+        frame_num = int(img_path.split('_')[-1].split('.')[0])
 
-        # Pre-check white pixel count to select detection method
-        image = cv2.imread(image_path)
-        x1, y1 = tl
-        x2, y2 = br
-        binary = preprocess_image(image[y1:y2, x1:x2], luminosity_threshold)
+        # Pre-check white pixel count (using leaflet crop) to select detection method
+        image = cv2.imread(img_path)
+        x1, y1 = img_leafl_tl
+        x2, y2 = img_leafl_br
+        binary = preprocess_image(image[y1:y2, x1:x2], img_leafl_thresh)
         wpc    = count_white_pixels(binary)
 
-        if wpc < method_selection_threshold:
+        if wpc < method_select_thresh:
             print(f"  method1_laser  frame {frame_num} (white_pixel_count={wpc})")
-            frame_data = method1_laser(image_path, frame_num,
-                                       tl, br, output_dir=output_dir,
-                                       dbg_overlay=dbg_overlay)
+            frame_data = method1_laser(img_path, image, frame_num,
+                                       img_laser_tl, img_laser_br,
+                                       img_laser_thresh,
+                                       laser_strip_width, laser_peak_step, laser_min_peak,
+                                       primary_laser_angle,
+                                       dbg_dir, dbg_overlay)
         else:
             print(f"  method2_leaflet frame {frame_num} (white_pixel_count={wpc})")
-            frame_data = method2_leaflet(image_path, frame_num,
-                                         tl, br, output_dir=output_dir,
-                                         threshold=luminosity_threshold,
+            frame_data = method2_leaflet(img_path, image, frame_num,
+                                         img_leafl_tl, img_leafl_br,
+                                         img_thresh=img_leafl_thresh,
+                                         dbg_dir=dbg_dir,
                                          dbg_overlay=dbg_overlay,
                                          dbg_threshold=dbg_threshold)
         all_data.append(frame_data)
 
-    results = compute_leaflet_angles(all_data, image_files[-1], tl, output_dir)
-
-    # Write CSV
-    csv_path = f"{output_dir}/results.csv"
-    with open(csv_path, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['Frame', 'Angle', 'Method'])
-        for frame_number, angle, method in results:
-            angle_s = f"{angle:.2f}" if angle is not None else 'N/A'
-            writer.writerow([frame_number, angle_s, method])
-
-    print(f"  {len(all_data)} frames processed. CSV: {csv_path}")
-    return all_data
+    results = compute_leaflet_angles(all_data, image_files[-1], img_leafl_tl, dbg_dir)
+    print(f"  {len(all_data)} frames processed.")
+    return results
 
 
 if __name__ == "__main__":
 
     # Configuration
-    data_directory = "data"
-    output_dir     = "output"
-    frame_range                = (0, 2000)       # Inclusive range of frame numbers to process
-    leaflet_bot_tl             = (1450, 660)     # Top-left (x, y) crop — bottom leaflet
-    leaflet_bot_br             = (1615, 1240)    # Bottom-right (x, y) crop — bottom leaflet
-    luminosity_threshold       = 20              # Pixels below this -> white, above -> black
-    method_selection_threshold = 400             # Min white pixel count to use method2_leaflet
-    dbg_overlay                = False           # Save overlay images
-    dbg_threshold              = False           # Save threshold visualization images
+    data_dir    = "data"
+    output_dir  = "output"
+    dbg_dir     = "dbg"  # Subdirectory for debug images
+    csv_path    = f"{output_dir}/results.csv"
 
-    # Clear and recreate output directory
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
+    frame_range          = (0, 2000)   # Inclusive range of frame numbers to process
+#   frame_range          = (110, 137)   # Inclusive range of frame numbers to process
+    method_select_thresh = 400          # Min white pixel count to use method2_leaflet
+    dbg_overlay          = False        # Save overlay images
+    dbg_threshold        = False        # Save threshold visualization images
+    smooth_cutoff        = 0.1         # Low-pass filter cutoff (fraction of Nyquist, 0.0-1.0)
 
-    print("Leaflet Angle Measurement")
-    print("=" * 50)
-    print(f"Processing frames from: {data_directory}")
-    print(f"Frame range: {frame_range[0]} to {frame_range[1]}")
-    print(f"Luminosity threshold: {luminosity_threshold}")
-    print(f"Method selection threshold: {method_selection_threshold}")
-    print()
+    # Method 1 config
+    img_laser_prim_tl   = (1200, 5)      # Top-left (x, y) crop coordinate
+    img_laser_prim_br   = (1800, 1000)  # Bottom-right (x, y) crop coordinate
+    img_laser_tl        = (500, 5)      # Top-left (x, y) crop coordinate
+    img_laser_br        = (1200, 1650)  # Bottom-right (x, y) crop coordinate
+    img_laser_thresh    = 90            # Pixels below this -> white, above -> black
+    laser_strip_width   = 10            # Width of each vertical strip for centroid detection
+    laser_peak_step     = 10            # Vertical step between strips
+    laser_min_peak      = 100           # Min strip peak intensity to consider a peak valid
 
-    print("--- Leaflet: bottom ---")
-    process_sequence(data_directory, output_dir,
-                     tl=leaflet_bot_tl, br=leaflet_bot_br,
-                     frame_range=frame_range, luminosity_threshold=luminosity_threshold,
-                     leaflet_sel="bot",
-                     dbg_overlay=dbg_overlay, dbg_threshold=dbg_threshold,
-                     method_selection_threshold=method_selection_threshold)
+    # Method 2 config
+    img_leafl_bot_tl    = (1450, 660)      # Top-left (x, y) crop — bottom leaflet
+    img_leafl_bot_br    = (1615, 1240)     # Bottom-right (x, y) crop — bottom leaflet
+    img_leafl_thresh    = 20               # Pixels below this -> white, above -> black
 
+    reset_dirs(output_dir, dbg_dir)
+
+    first_frame = sorted(glob.glob(f"{data_dir}/Set_01_*.png"))[0]
+    primary_laser_angle = detect_primary_laser_angle(
+        first_frame,
+        img_laser_prim_tl, img_laser_prim_br,
+        img_laser_thresh, laser_strip_width, laser_peak_step, laser_min_peak)
+    print(f"Primary laser angle: {primary_laser_angle:.2f} deg")
+
+    results = process_sequence(data_dir, dbg_dir,
+                               frame_range=frame_range,
+                               method_select_thresh=method_select_thresh,
+                               img_laser_tl=img_laser_tl, img_laser_br=img_laser_br,
+                               img_laser_thresh=img_laser_thresh,
+                               laser_strip_width=laser_strip_width, laser_peak_step=laser_peak_step, laser_min_peak=laser_min_peak,
+                               primary_laser_angle=primary_laser_angle,
+                               img_leafl_tl=img_leafl_bot_tl, img_leafl_br=img_leafl_bot_br,
+                               img_leafl_thresh=img_leafl_thresh,
+                               dbg_overlay=dbg_overlay, dbg_threshold=dbg_threshold)
+
+    results_smooth = smooth_results(results, smooth_cutoff)
+    write_results_csv(results, results_smooth, smooth_cutoff, csv_path)
     print("\nProcessing complete!")
