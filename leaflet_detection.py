@@ -46,22 +46,25 @@ def fit_circle(points):
     return cx, cy, r
 
 
-def compute_leaflet_angles(all_data, img_path_last, crop_tl, dbg_dir):
+def compute_leaflet_angles(all_data, img_path_last, crop_tl, dbg_dir, calib_frame_range=None):
     """
     Fit a circle to the leftmost-pixel trajectory, fill in the angle field
     for all leaflet frames, and return the list of (frame_number, angle, method)
     tuples for all frames.
 
     Args:
-        all_data:       List of frame dicts (modified in-place)
-        img_path_last:  Path to the last input image
-        crop_tl:        Top-left crop coordinate
-        dbg_dir:        Directory to save the trajectory image
+        all_data:            List of frame dicts (modified in-place)
+        img_path_last:       Path to the last input image
+        crop_tl:             Top-left crop coordinate
+        dbg_dir:             Directory to save the trajectory image
+        calib_frame_range:   (start, end) inclusive frame range to use for circle fit;
+                             None means use all leaflet frames
 
     Returns:
         List of (frame_number, angle, method) tuples
     """
-    cx_fit, cy_fit, _ = fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir)
+    cx_fit, cy_fit, _ = fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir,
+                                               calib_frame_range)
 
     for d in all_data:
         if d['method'] == 'leaflet' and d['leftmost'] is not None and cx_fit is not None:
@@ -73,34 +76,42 @@ def compute_leaflet_angles(all_data, img_path_last, crop_tl, dbg_dir):
     return [(d['frame_number'], d['angle'], d['method']) for d in all_data]
 
 
-def fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir):
+def fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir, calib_frame_range=None):
     """
     Fit a circle to the leftmost-pixel trajectory, draw it on the last input
     image alongside all centroid and leftmost points, and save the result.
 
     Args:
-        all_data:       List of frame dicts (must contain 'leftmost' and 'centroid')
-        img_path_last:  Path to the last input image (used as background)
-        crop_tl:        Top-left crop coordinate (offset for drawing on full image)
-        dbg_dir:        Directory to save the trajectory image
+        all_data:            List of frame dicts (must contain 'leftmost' and 'centroid')
+        img_path_last:       Path to the last input image (used as background)
+        crop_tl:             Top-left crop coordinate (offset for drawing on full image)
+        dbg_dir:             Directory to save the trajectory image
+        calib_frame_range:   (start, end) inclusive frame range to restrict circle fit;
+                             None means use all frames
 
     Returns:
         (cx_fit, cy_fit, r_fit) or (None, None, None) if fit failed
     """
-    lft_points = np.array([d['leftmost'] for d in all_data if d['leftmost'] is not None],
-                           dtype=np.float64)
-    cen_points = np.array([d['centroid'] for d in all_data if d['centroid'] is not None],
-                           dtype=np.float64)
+    def _in_range(d):
+        if calib_frame_range is None:
+            return True
+        s, e = calib_frame_range
+        return s <= d['frame_number'] <= e
 
-    cx_fit, cy_fit, r_fit = fit_circle(lft_points) if len(lft_points) >= 3 else (None, None, None)
+    calib_lft  = np.array([d['leftmost'] for d in all_data
+                            if d['leftmost'] is not None and _in_range(d)], dtype=np.float64)
+    calib_cen  = np.array([d['centroid']  for d in all_data
+                            if d['centroid']  is not None and _in_range(d)], dtype=np.float64)
+
+    cx_fit, cy_fit, r_fit = fit_circle(calib_lft) if len(calib_lft) >= 3 else (None, None, None)
 
     if cx_fit is not None:
         last_frame_num = all_data[-1]['frame_number']
         traj = cv2.imread(img_path_last).copy()
         ox, oy = crop_tl
-        for pt in lft_points:
+        for pt in calib_lft:
             cv2.circle(traj, (int(pt[0]) + ox, int(pt[1]) + oy), 2, (0, 255, 255), -1)
-        for pt in cen_points:
+        for pt in calib_cen:
             cv2.circle(traj, (int(pt[0]) + ox, int(pt[1]) + oy), 2, (0, 255, 0), -1)
         cv2.circle(traj, (int(cx_fit) + ox, int(cy_fit) + oy), int(r_fit), (0, 165, 255), 2)
         cv2.drawMarker(traj, (int(cx_fit) + ox, int(cy_fit) + oy), (0, 165, 255),
@@ -109,7 +120,7 @@ def fit_circle_trajectory(all_data, img_path_last, crop_tl, dbg_dir):
         cv2.imwrite(traj_path, traj)
         print(f"  Circle fit: center=({cx_fit:.1f}, {cy_fit:.1f}), r={r_fit:.1f}. Saved: {traj_path}")
     else:
-        print(f"  Not enough leftmost points for circle fit ({len(lft_points)} points).")
+        print(f"  Not enough leftmost points for circle fit ({len(calib_lft)} points).")
 
     return cx_fit, cy_fit, r_fit
 

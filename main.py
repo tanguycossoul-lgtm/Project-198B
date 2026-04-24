@@ -37,6 +37,7 @@ def process_sequence(data_dir, dbg_dir,
                      primary_laser_angle,
                      img_leafl_tl, img_leafl_br,
                      img_leafl_thresh,
+                     leaflet_calib_frame_range=None,
                      dbg_overlay=True, dbg_threshold=True):
     """
     Process a sequence of frames, dispatching to method1_laser or method2_leaflet
@@ -65,7 +66,14 @@ def process_sequence(data_dir, dbg_dir,
     image_files = [f for f in image_files
                    if start <= int(f.split('_')[-1].split('.')[0]) <= end]
 
-    all_data = []
+    all_data             = []
+    crossing_laser_angle = None
+    crossing_frame_num   = None
+    first_crossing_done  = False
+    prev_method          = None
+    last_leaflet_path    = None
+    last_leaflet_frame   = None
+
     for img_path in image_files:
         frame_num = int(img_path.split('_')[-1].split('.')[0])
 
@@ -84,6 +92,19 @@ def process_sequence(data_dir, dbg_dir,
                                        laser_strip_width, laser_peak_step, laser_min_peak,
                                        primary_laser_angle,
                                        dbg_dir, dbg_overlay)
+            # leaflet→laser transition: calibrate on the last leaflet frame
+            if not first_crossing_done and prev_method == 'leaflet':
+                first_crossing_done = True
+                crossing_frame_num  = last_leaflet_frame
+                cal_image = cv2.imread(last_leaflet_path)
+                laser_data = method1_laser(last_leaflet_path, cal_image, last_leaflet_frame,
+                                           img_laser_tl, img_laser_br,
+                                           img_laser_thresh,
+                                           laser_strip_width, laser_peak_step, laser_min_peak,
+                                           primary_laser_angle,
+                                           dbg_dir, False)
+                crossing_laser_angle = laser_data['angle']
+            prev_method = 'laser'
         else:
             print(f"  method2_leaflet frame {frame_num} (white_pixel_count={wpc})")
             frame_data = method2_leaflet(img_path, image, frame_num,
@@ -92,9 +113,39 @@ def process_sequence(data_dir, dbg_dir,
                                          dbg_dir=dbg_dir,
                                          dbg_overlay=dbg_overlay,
                                          dbg_threshold=dbg_threshold)
+            # laser→leaflet transition: calibrate on this frame
+            if not first_crossing_done and prev_method == 'laser':
+                first_crossing_done = True
+                crossing_frame_num  = frame_num
+                laser_data = method1_laser(img_path, image, frame_num,
+                                           img_laser_tl, img_laser_br,
+                                           img_laser_thresh,
+                                           laser_strip_width, laser_peak_step, laser_min_peak,
+                                           primary_laser_angle,
+                                           dbg_dir, False)
+                crossing_laser_angle = laser_data['angle']
+            last_leaflet_path  = img_path
+            last_leaflet_frame = frame_num
+            prev_method = 'leaflet'
         all_data.append(frame_data)
 
-    results = compute_leaflet_angles(all_data, image_files[-1], img_leafl_tl, dbg_dir)
+    results = compute_leaflet_angles(all_data, image_files[-1], img_leafl_tl, dbg_dir,
+                                     leaflet_calib_frame_range)
+
+    if crossing_laser_angle is not None and crossing_frame_num is not None:
+        crossing_leaflet_angle = next(
+            (angle for fn, angle, method in results
+             if fn == crossing_frame_num and method == 'leaflet' and angle is not None),
+            None
+        )
+        if crossing_leaflet_angle is not None:
+            correction = crossing_leaflet_angle - crossing_laser_angle
+            print(f"  Laser correction: {correction:.2f} deg (frame {crossing_frame_num})")
+            results = [
+                (fn, angle + correction if method == 'laser' and angle is not None else angle, method)
+                for fn, angle, method in results
+            ]
+
     print(f"  {len(all_data)} frames processed.")
     return results
 
@@ -108,9 +159,9 @@ if __name__ == "__main__":
     csv_path    = f"{output_dir}/results.csv"
 
     frame_range          = (0, 2000)   # Inclusive range of frame numbers to process
-#   frame_range          = (110, 137)   # Inclusive range of frame numbers to process
+ #  frame_range          = (0, 200)   # Inclusive range of frame numbers to process
     method_select_thresh = 400          # Min white pixel count to use method2_leaflet
-    dbg_overlay          = False        # Save overlay images
+    dbg_overlay            = False        # Save overlay images
     dbg_threshold        = False        # Save threshold visualization images
     smooth_cutoff        = 0.1         # Low-pass filter cutoff (fraction of Nyquist, 0.0-1.0)
 
@@ -125,9 +176,10 @@ if __name__ == "__main__":
     laser_min_peak      = 100           # Min strip peak intensity to consider a peak valid
 
     # Method 2 config
-    img_leafl_bot_tl    = (1450, 660)      # Top-left (x, y) crop — bottom leaflet
-    img_leafl_bot_br    = (1615, 1240)     # Bottom-right (x, y) crop — bottom leaflet
-    img_leafl_thresh    = 20               # Pixels below this -> white, above -> black
+    img_leafl_bot_tl            = (1450, 660)      # Top-left (x, y) crop — bottom leaflet
+    img_leafl_bot_br            = (1615, 1240)     # Bottom-right (x, y) crop — bottom leaflet
+    img_leafl_thresh            = 20               # Pixels below this -> white, above -> black
+    leaflet_calib_frame_range   = (0, 200)          # Frame range used to fit the circle
 
     reset_dirs(output_dir, dbg_dir)
 
@@ -147,6 +199,7 @@ if __name__ == "__main__":
                                primary_laser_angle=primary_laser_angle,
                                img_leafl_tl=img_leafl_bot_tl, img_leafl_br=img_leafl_bot_br,
                                img_leafl_thresh=img_leafl_thresh,
+                               leaflet_calib_frame_range=leaflet_calib_frame_range,
                                dbg_overlay=dbg_overlay, dbg_threshold=dbg_threshold)
 
     results_smooth = smooth_results(results, smooth_cutoff)
