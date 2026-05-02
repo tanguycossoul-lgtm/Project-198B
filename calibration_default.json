@@ -1,0 +1,17 @@
+{
+  "frame_range":               {"value": [0, 2000],    "description": "Inclusive range of frame numbers to process"},
+  "method_select_thresh":      {"value": 400,           "description": "Min white pixel count to use method2_leaflet"},
+  "smooth_cutoff":             {"value": 0.1,           "description": "Low-pass filter cutoff (fraction of Nyquist, 0.0-1.0)"},
+  "img_laser_prim_tl":         {"value": [1200, 5],     "description": "Top-left (x, y) crop — primary laser detection"},
+  "img_laser_prim_br":         {"value": [1800, 1000],  "description": "Bottom-right (x, y) crop — primary laser detection"},
+  "img_laser_tl":              {"value": [500, 5],      "description": "Top-left (x, y) crop — method1 laser"},
+  "img_laser_br":              {"value": [1200, 1650],  "description": "Bottom-right (x, y) crop — method1 laser"},
+  "img_laser_thresh":          {"value": 90,            "description": "Pixels below this threshold are treated as laser (method1)"},
+  "laser_strip_width":         {"value": 10,            "description": "Width of each vertical strip for Gaussian peak detection"},
+  "laser_peak_step":           {"value": 10,            "description": "Horizontal step between strips"},
+  "laser_min_peak":            {"value": 100,           "description": "Min strip peak intensity to attempt a Gaussian fit"},
+  "img_leafl_tl":              {"value": [1450, 660],   "description": "Top-left (x, y) crop — bottom leaflet"},
+  "img_leafl_br":              {"value": [1615, 1240],  "description": "Bottom-right (x, y) crop — bottom leaflet"},
+  "img_leafl_thresh":          {"value": 20,            "description": "Binary threshold for leaflet detection"},
+  "leaflet_calib_frame_range": {"value": [0, 200],      "description": "Frame range used to fit the circle trajectory"}
+}

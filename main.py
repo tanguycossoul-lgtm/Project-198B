@@ -4,6 +4,7 @@ import os
 import glob
 import shutil
 from smooth_results import smooth_results
+from config_loader import load_config
 
 from laser_detection import detect_primary_laser_angle, method1_laser
 from leaflet_detection import preprocess_image, count_white_pixels, method2_leaflet, compute_leaflet_angles
@@ -152,34 +153,37 @@ def process_sequence(data_dir, dbg_dir,
 
 if __name__ == "__main__":
 
-    # Configuration
-    data_dir    = "data"
-    output_dir  = "output"
-    dbg_dir     = "dbg"  # Subdirectory for debug images
-    csv_path    = f"{output_dir}/results.csv"
+    data_dir   = "data"
+    output_dir = "output"
+    dbg_dir    = "dbg"
+    csv_path   = f"{output_dir}/results.csv"
+    dbg_overlay   = False
+    dbg_threshold = False
 
-    frame_range          = (0, 2000)   # Inclusive range of frame numbers to process
- #  frame_range          = (0, 200)   # Inclusive range of frame numbers to process
-    method_select_thresh = 400          # Min white pixel count to use method2_leaflet
-    dbg_overlay            = False        # Save overlay images
-    dbg_threshold        = False        # Save threshold visualization images
-    smooth_cutoff        = 0.1         # Low-pass filter cutoff (fraction of Nyquist, 0.0-1.0)
+    # Load calibration: dataset-specific JSON if present, else default
+    frames = sorted(glob.glob(f"{data_dir}/Set_01_*.png"))
+    dataset_name = os.path.basename(os.path.dirname(frames[0])) if frames else "Set_01"
+    calib_path = f"{data_dir}/calibration_{dataset_name}.json"
+    if not os.path.exists(calib_path):
+        calib_path = "calibration_default.json"
+    print(f"Loading calibration: {calib_path}")
+    cfg = load_config(calib_path)
 
-    # Method 1 config
-    img_laser_prim_tl   = (1200, 5)      # Top-left (x, y) crop coordinate
-    img_laser_prim_br   = (1800, 1000)  # Bottom-right (x, y) crop coordinate
-    img_laser_tl        = (500, 5)      # Top-left (x, y) crop coordinate
-    img_laser_br        = (1200, 1650)  # Bottom-right (x, y) crop coordinate
-    img_laser_thresh    = 90            # Pixels below this -> white, above -> black
-    laser_strip_width   = 10            # Width of each vertical strip for centroid detection
-    laser_peak_step     = 10            # Vertical step between strips
-    laser_min_peak      = 100           # Min strip peak intensity to consider a peak valid
-
-    # Method 2 config
-    img_leafl_bot_tl            = (1450, 660)      # Top-left (x, y) crop — bottom leaflet
-    img_leafl_bot_br            = (1615, 1240)     # Bottom-right (x, y) crop — bottom leaflet
-    img_leafl_thresh            = 20               # Pixels below this -> white, above -> black
-    leaflet_calib_frame_range   = (0, 200)          # Frame range used to fit the circle
+    frame_range                = tuple(cfg["frame_range"])
+    method_select_thresh       = cfg["method_select_thresh"]
+    smooth_cutoff              = cfg["smooth_cutoff"]
+    img_laser_prim_tl          = tuple(cfg["img_laser_prim_tl"])
+    img_laser_prim_br          = tuple(cfg["img_laser_prim_br"])
+    img_laser_tl               = tuple(cfg["img_laser_tl"])
+    img_laser_br               = tuple(cfg["img_laser_br"])
+    img_laser_thresh           = cfg["img_laser_thresh"]
+    laser_strip_width          = cfg["laser_strip_width"]
+    laser_peak_step            = cfg["laser_peak_step"]
+    laser_min_peak             = cfg["laser_min_peak"]
+    img_leafl_bot_tl           = tuple(cfg["img_leafl_tl"])
+    img_leafl_bot_br           = tuple(cfg["img_leafl_br"])
+    img_leafl_thresh           = cfg["img_leafl_thresh"]
+    leaflet_calib_frame_range  = tuple(cfg["leaflet_calib_frame_range"])
 
     reset_dirs(output_dir, dbg_dir)
 
