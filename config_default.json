@@ -1,5 +1,5 @@
 {
-  "frame_range":               {"value": [0, 2000],    "description": "Inclusive range of frame numbers to process"},
+  "frame_range":               {"value": [0, 2000],     "description": "Inclusive range of frame numbers to process"},
   "method_select_thresh":      {"value": 400,           "description": "Min white pixel count to use method2_leaflet"},
   "smooth_cutoff":             {"value": 0.1,           "description": "Low-pass filter cutoff (fraction of Nyquist, 0.0-1.0)"},
   "img_laser_prim_tl":         {"value": [1200, 5],     "description": "Top-left (x, y) crop — primary laser detection"},

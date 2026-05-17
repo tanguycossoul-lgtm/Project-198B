@@ -1,13 +1,15 @@
+import argparse
 import csv
 import cv2
 import os
 import glob
 import shutil
-from smooth_results import smooth_results
-from config_loader import load_config
+import sys
+from pipeline.smooth_results import smooth_results
+from pipeline.config_loader import load_config
 
-from laser_detection import detect_primary_laser_angle, method1_laser
-from leaflet_detection import preprocess_image, count_white_pixels, method2_leaflet, compute_leaflet_angles
+from pipeline.laser_detection import detect_primary_laser_angle, method1_laser
+from pipeline.leaflet_detection import preprocess_image, count_white_pixels, method2_leaflet, compute_leaflet_angles
 
 
 def reset_dirs(*dirs):
@@ -45,7 +47,7 @@ def process_sequence(data_dir, dbg_dir,
     based on the white pixel count threshold.
 
     Args:
-        data_dir: Input directory with Set_01_*.png files
+        data_dir: Input directory with *.png files
         dbg_dir: Directory to save debug images
         frame_range: (start, end) inclusive
         method_select_thresh: Min white pixel count to use method2_leaflet;
@@ -62,18 +64,12 @@ def process_sequence(data_dir, dbg_dir,
         dbg_overlay: If True, save overlay images
         dbg_threshold: If True, save threshold visualization images
     """
-    image_files = sorted(glob.glob(f"{data_dir}/Set_01_*.png"))
+    image_files = sorted(glob.glob(f"{data_dir}/*.png"))
     start, end = frame_range
     image_files = [f for f in image_files
                    if start <= int(f.split('_')[-1].split('.')[0]) <= end]
 
-    all_data             = []
-    crossing_laser_angle = None
-    crossing_frame_num   = None
-    first_crossing_done  = False
-    prev_method          = None
-    last_leaflet_path    = None
-    last_leaflet_frame   = None
+    all_data = []
 
     for img_path in image_files:
         frame_num = int(img_path.split('_')[-1].split('.')[0])
@@ -93,19 +89,6 @@ def process_sequence(data_dir, dbg_dir,
                                        laser_strip_width, laser_peak_step, laser_min_peak,
                                        primary_laser_angle,
                                        dbg_dir, dbg_overlay)
-            # leaflet→laser transition: calibrate on the last leaflet frame
-            if not first_crossing_done and prev_method == 'leaflet':
-                first_crossing_done = True
-                crossing_frame_num  = last_leaflet_frame
-                cal_image = cv2.imread(last_leaflet_path)
-                laser_data = method1_laser(last_leaflet_path, cal_image, last_leaflet_frame,
-                                           img_laser_tl, img_laser_br,
-                                           img_laser_thresh,
-                                           laser_strip_width, laser_peak_step, laser_min_peak,
-                                           primary_laser_angle,
-                                           dbg_dir, False)
-                crossing_laser_angle = laser_data['angle']
-            prev_method = 'laser'
         else:
             print(f"  method2_leaflet frame {frame_num} (white_pixel_count={wpc})")
             frame_data = method2_leaflet(img_path, image, frame_num,
@@ -114,38 +97,10 @@ def process_sequence(data_dir, dbg_dir,
                                          dbg_dir=dbg_dir,
                                          dbg_overlay=dbg_overlay,
                                          dbg_threshold=dbg_threshold)
-            # laser→leaflet transition: calibrate on this frame
-            if not first_crossing_done and prev_method == 'laser':
-                first_crossing_done = True
-                crossing_frame_num  = frame_num
-                laser_data = method1_laser(img_path, image, frame_num,
-                                           img_laser_tl, img_laser_br,
-                                           img_laser_thresh,
-                                           laser_strip_width, laser_peak_step, laser_min_peak,
-                                           primary_laser_angle,
-                                           dbg_dir, False)
-                crossing_laser_angle = laser_data['angle']
-            last_leaflet_path  = img_path
-            last_leaflet_frame = frame_num
-            prev_method = 'leaflet'
         all_data.append(frame_data)
 
     results = compute_leaflet_angles(all_data, image_files[-1], img_leafl_tl, dbg_dir,
                                      leaflet_calib_frame_range)
-
-    if crossing_laser_angle is not None and crossing_frame_num is not None:
-        crossing_leaflet_angle = next(
-            (angle for fn, angle, method in results
-             if fn == crossing_frame_num and method == 'leaflet' and angle is not None),
-            None
-        )
-        if crossing_leaflet_angle is not None:
-            correction = crossing_leaflet_angle - crossing_laser_angle
-            print(f"  Laser correction: {correction:.2f} deg (frame {crossing_frame_num})")
-            results = [
-                (fn, angle + correction if method == 'laser' and angle is not None else angle, method)
-                for fn, angle, method in results
-            ]
 
     print(f"  {len(all_data)} frames processed.")
     return results
@@ -153,20 +108,26 @@ def process_sequence(data_dir, dbg_dir,
 
 if __name__ == "__main__":
 
-    data_dir   = "data"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", required=True, metavar="DATASET",
+                        help="Dataset subfolder name inside data/")
+    args = parser.parse_args()
+
+    data_dir   = os.path.join("data", args.d)
     output_dir = "output"
     dbg_dir    = "dbg"
     csv_path   = f"{output_dir}/results.csv"
     dbg_overlay   = False
     dbg_threshold = False
 
-    # Load calibration: dataset-specific JSON if present, else default
-    frames = sorted(glob.glob(f"{data_dir}/Set_01_*.png"))
-    dataset_name = os.path.basename(os.path.dirname(frames[0])) if frames else "Set_01"
-    calib_path = f"{data_dir}/calibration_{dataset_name}.json"
+    if not os.path.isdir(data_dir) or not glob.glob(f"{data_dir}/*.png"):
+        print(f"Error: no PNG files found in '{data_dir}'", file=sys.stderr)
+        sys.exit(1)
+
+    calib_path = os.path.join(data_dir, "config_custom.json")
     if not os.path.exists(calib_path):
-        calib_path = "calibration_default.json"
-    print(f"Loading calibration: {calib_path}")
+        calib_path = "config_default.json"
+    print(f"Config: {calib_path}")
     cfg = load_config(calib_path)
 
     frame_range                = tuple(cfg["frame_range"])
@@ -187,7 +148,7 @@ if __name__ == "__main__":
 
     reset_dirs(output_dir, dbg_dir)
 
-    first_frame = sorted(glob.glob(f"{data_dir}/Set_01_*.png"))[0]
+    first_frame = sorted(glob.glob(f"{data_dir}/*.png"))[0]
     primary_laser_angle = detect_primary_laser_angle(
         first_frame,
         img_laser_prim_tl, img_laser_prim_br,

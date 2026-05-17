@@ -1,7 +1,7 @@
 import json
 import os
 
-_DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "calibration_default.json")
+_DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "..", "config_default.json")
 
 
 def load_config(json_path):
@@ -14,7 +14,7 @@ def load_config(json_path):
 def save_config(cfg, json_path):
     """
     Write cfg ({key: value}) to json_path, preserving description fields
-    by merging with calibration_default.json.
+    by merging with config_default.json.
     """
     try:
         with open(_DEFAULT_PATH) as f:
